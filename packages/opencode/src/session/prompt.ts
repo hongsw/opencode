@@ -831,8 +831,74 @@ export namespace SessionPrompt {
     return tools
   }
 
+  /**
+   * Regex to match babot-file:// protocol URLs in text
+   * Used to embed images from Slack via the gateway
+   * Format: babot-file:///workspace/images/xxx.png
+   */
+  const babotFileRegex = /babot-file:\/\/([^\s,;)}\]]+)/gi
+
+  /**
+   * Preprocess parts to extract babot-file:// URLs from text and convert to file parts
+   * This enables Slack image attachments to be processed as multimodal data
+   */
+  function preprocessBabotFileParts(parts: PromptInput["parts"]): PromptInput["parts"] {
+    const result: PromptInput["parts"] = []
+
+    for (const part of parts) {
+      if (part.type === "text") {
+        const matches = [...part.text.matchAll(babotFileRegex)]
+        if (matches.length > 0) {
+          // Replace URLs in text with references
+          let processedText = part.text
+          for (const match of matches) {
+            const fullMatch = match[0]
+            const filepath = match[1]
+            const filename = path.basename(filepath)
+            processedText = processedText.replace(fullMatch, `[이미지: ${filename}]`)
+
+            // Determine mime type from extension
+            const ext = path.extname(filepath).toLowerCase()
+            const mimeMap: Record<string, string> = {
+              ".png": "image/png",
+              ".jpg": "image/jpeg",
+              ".jpeg": "image/jpeg",
+              ".gif": "image/gif",
+              ".webp": "image/webp",
+              ".bmp": "image/bmp",
+              ".svg": "image/svg+xml",
+            }
+            const mime = mimeMap[ext] || "image/png"
+
+            // Add file part for the image
+            result.push({
+              type: "file",
+              url: `file://${filepath}`,
+              filename,
+              mime,
+            })
+          }
+          result.push({
+            ...part,
+            text: processedText,
+          })
+        } else {
+          result.push(part)
+        }
+      } else {
+        result.push(part)
+      }
+    }
+
+    return result
+  }
+
   async function createUserMessage(input: PromptInput) {
     const agent = await Agent.get(input.agent ?? (await Agent.defaultAgent()))
+
+    // Preprocess parts to extract babot-file:// URLs
+    const preprocessedParts = preprocessBabotFileParts(input.parts)
+
     const info: MessageV2.Info = {
       id: input.messageID ?? Identifier.ascending("message"),
       role: "user",
@@ -848,7 +914,7 @@ export namespace SessionPrompt {
     }
 
     const parts = await Promise.all(
-      input.parts.map(async (part): Promise<MessageV2.Part[]> => {
+      preprocessedParts.map(async (part): Promise<MessageV2.Part[]> => {
         if (part.type === "file") {
           // before checking the protocol we check if this is an mcp resource because it needs special handling
           if (part.source?.type === "resource") {
