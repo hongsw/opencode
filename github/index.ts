@@ -783,7 +783,7 @@ async function assertPermissions() {
 }
 
 async function updateComment(body: string) {
-  if (!commentId) return
+  if (!commentId || !octoRest) return
 
   console.log("Updating comment...")
 
@@ -812,6 +812,8 @@ async function createPR(base: string, branch: string, title: string, body: strin
 }
 
 function footer(opts?: { image?: boolean }) {
+  if (!session) return ""
+
   const { providerID, modelID } = useEnvModel()
 
   const image = (() => {
